@@ -46,8 +46,8 @@ def measure_distance():
     time.sleep_us(5)
     trig_pin.low()
    
-    pulse_duration = time_pulse_us(echo_pin, 1) # Wait for HIGH, returns time in microseconds
-    distance = (pulse_duration * 0.0343) / 2 # Speed of sound in cm/us, then convert us to cm
+    pulse_duration = time_pulse_us(echo_pin, 1) 
+    distance = (pulse_duration * 0.0343) / 2 
 
     return distance
 
