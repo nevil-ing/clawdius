@@ -85,9 +85,21 @@ def measure_distance():
     trig_pin.high()
     time.sleep_us(10)
     trig_pin.low()
-    pulse_duration = time_pulse_us(echo_pin, 1)
-    distance = (pulse_duration / 2) / 29.1  # Speed of sound adjusted for cm/us
-    return distance
+    while not echo_pin.value():
+        pass
+
+    time1 = time.ticks_us()  
+
+    
+    while echo_pin.value():
+        pass
+
+    time2 = time.ticks_us()  
+
+    
+    distance = time.ticks_diff(time2, time1)
+
+    return distance * 340 / 2 / 10000
     
 
 def sensor_readings():
