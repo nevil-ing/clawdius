@@ -1,287 +1,248 @@
 from machine import Pin, time_pulse_us, PWM
 import time
 import utime
+import machine
 
-# --- Constants & Configurations ---
-# Motor Pin Definitions
-RIGHT_MOTOR_1_PIN = 10
-RIGHT_MOTOR_2_PIN = 11
-LEFT_MOTOR_1_PIN = 12
-LEFT_MOTOR_2_PIN = 15
-ENA_PIN = 7
-ENB_PIN = 6 
-
-# Servos
-#SERVO_PIN = 16 
-
-#ultrasonic pins
-TRIG_PIN = 14
-ECHO_PIN = 17
+# Motor Pins
+IN1 = 17
+IN2 = 12
+IN3 = 13
+IN4 = 14
+ENA_PIN = 16
+ENB_PIN = 15
 
 # IR sensor Pins
-IR1_PIN = 1
-IR2_PIN = 2
-IR3_PIN = 4
-IR4_PIN = 5
-IR5_PIN = 6
+IR1_PIN = 11
+IR2_PIN = 10
+IR3_PIN = 9
+IR4_PIN = 8
+IR5_PIN = 7
 
-# PID Tuning 
-KP = 0.2 
-KD = 0.1
-MAX_SPEED = 4500  
+# Ultrasonic Sensor Pins
+TRIG_PIN = 1
+ECHO_PIN = 2
 
-#global variables
 
-pos1 = 115 #servo
-#set_position = 200 
-d = 0
-last_p =0
-sum_w = 0
-sum_i = 0
-error = 0
-i=0
-p = 0
-sensor = [0, 0, 0, 0, 0]
-current_position=0
+# PID Tuning
+KP = 20
+KI = 0.0
+KD = 0.0
+BASE_SPEED = 100  # Tune this value (0-100)
+MAX_SPEED = 1500 # Reduced MAX_SPEED dramatically
 
-# --- Pin Initializations ---
+# Global Variables
+previous_error = 0
+integral = 0
+previous_time = time.time()
+t_junction_count = 0
+previous_error = 0
+integral = 0
+previous_time = time.time()
 
-# Motor pins
-right_motor_1 = Pin(RIGHT_MOTOR_1_PIN, Pin.OUT)
-right_motor_2 = Pin(RIGHT_MOTOR_2_PIN, Pin.OUT)
-left_motor_1 = Pin(LEFT_MOTOR_1_PIN, Pin.OUT)
-left_motor_2 = Pin(LEFT_MOTOR_2_PIN, Pin.OUT)
+# Pin Definitions and Initializations
+ir_pins = [Pin(IR1_PIN, Pin.IN), Pin(IR2_PIN, Pin.IN), Pin(IR3_PIN, Pin.IN), Pin(IR4_PIN, Pin.IN), Pin(IR5_PIN, Pin.IN)]
+in1 = Pin(IN1, Pin.OUT)
+in2 = Pin(IN2, Pin.OUT)
+in3 = Pin(IN3, Pin.OUT)
+in4 = Pin(IN4, Pin.OUT)
 
-#PWM
 enable1 = PWM(Pin(ENA_PIN))
 enable2 = PWM(Pin(ENB_PIN))
-enable1.freq(500) 
-enable2.freq(500) 
-#ultrasonic
-trig_pin = Pin(TRIG_PIN, Pin.OUT)
-echo_pin = Pin(ECHO_PIN, Pin.IN)
+enable1.freq(500)
+enable2.freq(500)
 
-# IR sensors
-ir_pins = [Pin(IR1_PIN, Pin.IN), Pin(IR2_PIN, Pin.IN), Pin(IR3_PIN, Pin.IN), Pin(IR4_PIN, Pin.IN), Pin(IR5_PIN, Pin.IN)]
-'''
-# Servo 
-servo = PWM(Pin(SERVO_PIN))
-servo.freq(50)  # Set servo PWM frequency to 50Hz (standard)
-initial servo position
-def set_servo_angle(angle):
-    pulse_width = int(2000 / 180 * angle + 500)
-    servo.duty_u16(pulse_width * 3.268292682926829) #convert pulse width into correct duty cycle
-'''
-def setspeed(left_speed, right_speed):
-    enable1.duty_u16(left_speed)
-    enable2.duty_u16(right_speed)
+TRIG = Pin(TRIG_PIN, Pin.OUT)  # TRIG pin set as output
+ECHO = Pin(ECHO_PIN, Pin.IN)   # ECHO pin set as input
 
+LOG_FILE = "robot_log.txt"  # Define the log file name
 
-# --- Function Definitions ---
+# Ultrasonic Distance Function
+def distance():
+    """
+    Measures the distance using the ultrasonic sensor.
 
-def measure_distance():
-    trig_pin.low()
-    time.sleep_us(2)
-    trig_pin.high()
-    time.sleep_us(10)
-    trig_pin.low()
-    while not echo_pin.value():
-        pass
+    Returns:
+        float: Distance in centimeters.  Returns -1 if a timeout occurs.
+    """
+    TRIG.low()
+    utime.sleep_us(2)
+    TRIG.high()
+    utime.sleep_us(10)
+    TRIG.low()
 
-    time1 = time.ticks_us()  
+    # Wait for ECHO pin to go high with a timeout
+    timeout_start = utime.ticks_us()
+    while not ECHO.value():
+        if utime.ticks_diff(utime.ticks_us(), timeout_start) > 100000:  # 100ms timeout
+            log_message = "Ultrasonic Sensor Timeout (ECHO High)"
+            print(log_message)
+            log_to_file(log_message)
+            return -1  # Indicate timeout
 
-    
-    while echo_pin.value():
-        pass
+    echo_start = utime.ticks_us()
 
-    time2 = time.ticks_us()  
+    # Wait for ECHO pin to go low with a timeout
+    timeout_start = utime.ticks_us()
+    while ECHO.value():
+        if utime.ticks_diff(utime.ticks_us(), timeout_start) > 100000:  # 100ms timeout
+            log_message = "Ultrasonic Sensor Timeout (ECHO Low)"
+            print(log_message)
+            log_to_file(log_message)
+            return -1  # Indicate timeout
 
-    
-    distance = time.ticks_diff(time2, time1)
+    echo_end = utime.ticks_us()
 
-    return distance * 340 / 2 / 10000
-    
+    pulse_duration = utime.ticks_diff(echo_end, echo_start)
 
+    distance_cm = (pulse_duration * 0.0343) / 2  # Distance in cm/us
+
+    return distance_cm
+
+# IR Sensor Reading Function
 def sensor_readings():
-    return [pin.value() for pin in ir_pins]
+    """
+    Reads the values from the IR sensors.
 
+    Returns:
+        list: A list of sensor values (0 or 1) from IR1 to IR5.
+    """
+    return [pin.value() for pin in ir_pins] 
+
+
+# Motor Speed Control Function
+def setspeed(left_speed, right_speed):
+    """
+    Sets the speed of the left and right motors using PWM.
+
+    Args:
+        left_speed (int): PWM duty cycle for the left motor (0-65535).
+        right_speed (int): PWM duty cycle for the right motor (0-65535).
+    """
+    enable1.duty_u16(int(left_speed*(65535/100))) #Scaling speeds that goes from 0 to 100
+    enable2.duty_u16(int(right_speed*(65535/100))) #Scaling speeds that goes from 0 to 100
+
+
+# Forward Movement (Crossings Counter) - UNUSED in current implementation
 def forward_cross(c):
+    """
+    Moves forward, counting the number of times all IR sensors detect a line (crossing).
+
+    Args:
+        c (int): The number of crossings to count.
+    """
     cross = 0
     while cross < c:
         forward()
         if all(reading == 1 for reading in sensor_readings()):
-            cross+=1
+            cross += 1
             while all(reading == 1 for reading in sensor_readings()):
                 forward()
+def calculate_error(sensor_values):
+    # Assign weights to sensors: [leftmost, left, center, right, rightmost]
+    WEIGHTS = [-2, -1, 0, 1, 2]
+    error = sum(weight * value for weight, value in zip(WEIGHTS, sensor_values))
+    return error
 
-
-def left_u_turn():
-    while ir_pins[2].value() == 1:
-        left_motor_1.off()
-        left_motor_2.off()
-        right_motor_1.off()
-        right_motor_2.on()
-        setspeed(150, 150)
-
-    while ir_pins[2].value() == 0:
-        left_motor_1.off()
-        left_motor_2.off()
-        right_motor_1.off()
-        right_motor_2.on()
-        setspeed(150, 150)
-    stop()
-    time.sleep_ms(500)
-
-
-def right_u_turn():
-    while ir_pins[2].value() == 1:
-        left_motor_1.off()
-        left_motor_2.on()
-        right_motor_1.off()
-        right_motor_2.off()
-        setspeed(150, 150)
-    while ir_pins[2].value() == 0:
-        left_motor_1.off()
-        left_motor_2.on()
-        right_motor_1.off()
-        right_motor_2.off()
-        setspeed(150, 150)
-    stop()
-    time.sleep_ms(500)
-
-def u_turn():
-    while ir_pins[2].value() == 1:
-        left_motor_1.off()
-        left_motor_2.on()
-        right_motor_1.on()
-        right_motor_2.off()
-        setspeed(150, 150)
-    while ir_pins[2].value() == 0:
-        left_motor_1.off()
-        left_motor_2.on()
-        right_motor_1.on()
-        right_motor_2.off()
-        setspeed(150, 150)
-
-    stop()
-    time.sleep_ms(500)
-
-def turn_left():
-    stop()
-    time.sleep_ms(500)
-    while ir_pins[2].value() == 0:
-        left_motor_1.off()
-        left_motor_2.off()
-        right_motor_1.off()
-        right_motor_2.on()
-        setspeed(150, 150)
-
-    stop()
-    time.sleep_ms(500)
-
-
+# Forward Movement with PID Control
 def forward():
-    global sum_w, sum_i, p, d, last_p,current_position
+    """
+    Moves the robot forward while attempting to stay on the line using PID control.
+    """
+    global previous_error, integral, previous_time
 
-    sum_w = 0
-    sum_i = 0
-    sensor=sensor_readings()
+    sensor_values = sensor_readings()
+    error = calculate_error(sensor_values)
+    log_message = f"sensor:{sensor_values},error: {error}"
+    print(log_message)
+    log_to_file(log_message)
 
-    for i in range(5):
-       sum_w += (sensor[i] * i * 100)
-       sum_i += sensor[i]
-    if(sum_i != 0):
-        current_position = sum_w / sum_i
-    else :
-      current_position =0
+    current_time = time.time()
+    dt = current_time - previous_time
 
-    p= 100 - current_position 
-    d = p - last_p
-    last_p=p
-    error = (p*KP + d*KD)
-    if error < 0:
-        leftWheel = MAX_SPEED
-        rightWheel = int(MAX_SPEED - error)
-    else:
-        rightWheel = MAX_SPEED
-        leftWheel = int(MAX_SPEED+error)
-    left_motor_1.off()
-    left_motor_2.on()
-    right_motor_1.off()
-    right_motor_2.on()
-    setspeed(leftWheel, rightWheel)
-    
+    proportional = error
+    integral += error * dt
+    derivative = (error - previous_error) / dt if dt > 0 else 0
+
+    correction = (KP * proportional) + (KI * integral) + (KD * derivative)
+
+    left_speed = BASE_SPEED - correction
+    right_speed = BASE_SPEED + correction
+
+    # Clamp the speeds between 0 and 100
+    left_speed = max(min(left_speed, 100), 0)
+    right_speed = max(min(right_speed, 100), 0)
+
+    log_message = f"Correction: {correction}, Left speed: {left_speed}, Right speed: {right_speed}"
+    print(log_message)
+    log_to_file(log_message)
+
+    # Motor direction control
+    in1.low()
+    in2.high()
+    in3.high()
+    in4.low()
+
+    # Set motor speeds
+    setspeed(left_speed, right_speed)
+
+    previous_error = error
+    previous_time = current_time
 
 
+# Stop Function
 def stop():
-    right_motor_1.off()
-    right_motor_2.off()
-    left_motor_1.off()
-    left_motor_2.off()
+    """
+    Stops the robot.
+    """
+    in1.low()
+    in2.low()
+    in3.low()
+    in4.low()
     setspeed(0, 0)
 
+def log_to_file(message):
+    """
+    Appends a message to the log file with a timestamp.
+    """
+    timestamp = utime.time()
+    log_message = f"{timestamp}: {message}\n"
+    try:
+        with open(LOG_FILE, "a") as f:
+            f.write(log_message)
+    except OSError as e:
+        print(f"Error writing to log file: {e}")
 
-# --- Main Loop ---
+# Main Loop
+try:
+    with open(LOG_FILE, "w") as f: #Clear previous data
+        f.write("")  # Clear the log file at the start of each run
+except OSError as e:
+    print(f"Error opening/creating log file: {e}")
 
-while True:
-    distance = measure_distance()
-   # set_servo_angle(pos1)
-    T=True
-    while not T:
-        forward()
-        T=all(reading == 1 for reading in sensor_readings())
-    right_u_turn()
-    forward_cross(3)
-    right_u_turn()
+try:
+    while True:
+        dist = distance()
+        log_message = "Distance: %.2f cm" % dist
+        print(log_message)
+        log_to_file(log_message)
 
-    while distance > 13:
-       forward()
-       distance = measure_distance()
+        if dist == -1:
+            log_message = "Error reading distance, stopping"
+            print(log_message)
+            log_to_file(log_message)
+            stop()
+            utime.sleep(0.1)
+            continue
 
-    stop()
-    '''
-    for pos1 in range(115, 19, -1):
-        set_servo_angle(pos1)
-        time.sleep_ms(25)
-    time.sleep_ms(1000)
-    for pos1 in range(20,116):
-         set_servo_angle(pos1)
-         time.sleep_ms(25)
-         '''
-    time.sleep_ms(1000)
-    u_turn()
-    forward_cross(2)
-    left_u_turn()
-    forward_cross(1)
-
-    while distance > 13:
-       forward()
-       distance = measure_distance()
-    stop()
-    '''
-    for pos1 in range(115, 19, -1):
-        set_servo_angle(pos1)
-        time.sleep_ms(25)
-    time.sleep_ms(1000)
-    for pos1 in range(20,116):
-         set_servo_angle(pos1)
-         time.sleep_ms(25)
-         '''
-    time.sleep_ms(1000)
-    forward_cross(2)
-
-    while distance > 13:
-       forward()
-       distance = measure_distance()
-    stop()
-    '''
-    for pos1 in range(115, 19, -1):
-        set_servo_angle(pos1)
-        time.sleep_ms(25)
-    time.sleep_ms(1000)
-    for pos1 in range(20,116):
-         set_servo_angle(pos1)
-         time.sleep_ms(25)
-    time.sleep_ms(1000)
-    '''
-    time.sleep_ms(10000)
+        if dist > 10:
+            forward()
+        else:
+            stop()
+            log_message = "Object detected, stopping."
+            print(log_message)
+            log_to_file(log_message)
+        utime.sleep(0.05)
+except KeyboardInterrupt:
+    print("Exiting program")
+except Exception as e:
+    print(f"An unexpected error occurred: {e}")

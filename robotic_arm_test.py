@@ -3,11 +3,10 @@ import time
 import utime
 
 SERVO_PINS= {
-    "base":4,
-    "shoulder": 16,
-    "elbow":21,
-    "wrist":8,
-    "gripper":9
+    "base":18,
+    "shoulder": 19,
+    "elbow":20,
+    "gripper":21,
 }
 
 servo_pwms = {}
@@ -28,11 +27,15 @@ def set_servo_angle(servo_name, angle):
     pulse_width_us = int((angle / 180) * 2000 + 1000)
     duty_cycle = int(pulse_width_us * (65535 / 20000))
     pwm.duty_u16(duty_cycle)
-
+    
 while True:
-    for angle in range(115, 19, -1):
-        set_servo_angle("base", angle)
+      
+    for angle in range(19, 120):
+        set_servo_angle("gripper", angle)
+        print(f"{angle}")
+        time.sleep_ms(25)  
+        
+    for angle in range(120, 19):
+        set_servo_angle("gripper", angle)
+        print(f"{angle}")
         time.sleep_ms(25)
-    for angle in range(19, 115):
-        set_servo_angle("shoulder", angle)
-        time.sleep_ms(25)    
