@@ -1,6 +1,6 @@
 import machine  
 import time  
-
+#########test
 
 TRIG = machine.Pin(1, machine.Pin.OUT)  # TRIG pin set as output
 ECHO = machine.Pin(2, machine.Pin.IN)  # ECHO pin set as input
